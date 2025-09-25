@@ -29,14 +29,49 @@ export function createSSEServer(mcpServer: Server) {
         transportMap.set(transport.sessionId, transport);
         console.log(`[SSE] Transport added to map. Total transports: ${transportMap.size}`);
         
-        // Clean up when connection closes
-        res.on('close', () => {
-            console.log(`[SSE] Connection closed for sessionId: ${transport.sessionId}`);
+        // 完整的连接清理函数
+        const cleanup = () => {
+            console.log(`[SSE] Connection cleanup for sessionId: ${transport.sessionId}`);
             transportMap.delete(transport.sessionId);
             console.log(`[SSE] Transport removed from map. Total transports: ${transportMap.size}`);
+            if (connectionTimeout) {
+                clearTimeout(connectionTimeout);
+            }
+            if (heartbeatInterval) {
+                clearInterval(heartbeatInterval);
+            }
+        };
+
+        // 监听所有可能的断连事件
+        res.on('close', cleanup);
+        res.on('error', (error) => {
+            console.error(`[SSE] Connection error for sessionId: ${transport.sessionId}`, error);
+            cleanup();
         });
+        res.on('finish', cleanup);
+
+        // 添加心跳机制 (每30秒发送一次心跳)
+        const heartbeatInterval = setInterval(() => {
+            try {
+                res.write(': heartbeat\n\n');
+            } catch (error) {
+                console.error(`[SSE] Heartbeat failed for sessionId: ${transport.sessionId}`, error);
+                cleanup();
+            }
+        }, 30000);
+
+        // 添加连接超时保护 (10分钟)
+        const connectionTimeout = setTimeout(() => {
+            console.log(`[SSE] Connection timeout for sessionId: ${transport.sessionId}`);
+            res.end();
+        }, 600000);
         
-        await mcpServer.connect(transport);
+        try {
+            await mcpServer.connect(transport);
+        } catch (error) {
+            console.error(`[SSE] Error connecting to MCP server for sessionId: ${transport.sessionId}`, error);
+            cleanup();
+        }
     });
 
     app.post("/messages", async (req, res) => {

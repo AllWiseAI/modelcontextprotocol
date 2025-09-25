@@ -148,6 +148,9 @@ async function performChatCompletion(
   };
 
   let response;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 90000); // 90秒超时
+
   try {
     response = await fetch(url.toString(), {
       method: "POST",
@@ -156,8 +159,14 @@ async function performChatCompletion(
         "Authorization": `Bearer ${PERPLEXITY_API_KEY}`,
       },
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
   } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      throw new Error('Perplexity API request timed out after 90 seconds');
+    }
     throw new Error(`Network error while calling Perplexity API: ${error}`);
   }
 
