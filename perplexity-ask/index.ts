@@ -164,7 +164,7 @@ async function performChatCompletion(
     clearTimeout(timeoutId);
   } catch (error) {
     clearTimeout(timeoutId);
-    if (error.name === 'AbortError') {
+    if (error instanceof Error && error.name === 'AbortError') {
       throw new Error('Perplexity API request timed out after 90 seconds');
     }
     throw new Error(`Network error while calling Perplexity API: ${error}`);
