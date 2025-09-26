@@ -9,8 +9,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, } from "@modelcontextprotocol/sdk/types.js";
-import { createSSEServer } from "./sse-server.js";
+import express from 'express';
+import cors from 'cors';
 /**
  * Definition of the Perplexity Ask Tool.
  * This tool accepts an array of messages and returns a chat completion response
@@ -282,9 +284,49 @@ function runServer() {
     return __awaiter(this, void 0, void 0, function* () {
         try {
             const PORT = process.env.PORT || 3001;
-            const sseServer = createSSEServer(server);
-            sseServer.listen(PORT, () => {
+            const app = express();
+            app.use(cors());
+            app.use(express.json());
+            const transports = new Map();
+            // SSE endpoint
+            app.get('/sse', (req, res) => __awaiter(this, void 0, void 0, function* () {
+                const transport = new SSEServerTransport('/message', res);
+                yield transport.start();
+                transports.set(transport.sessionId, transport);
+                // Connect the server to this transport
+                yield server.connect(transport);
+                transport.onclose = () => {
+                    transports.delete(transport.sessionId);
+                    console.error(`Client disconnected: ${transport.sessionId}`);
+                };
+                console.error(`Client connected: ${transport.sessionId}`);
+            }));
+            // Message endpoint
+            app.post('/message', (req, res) => __awaiter(this, void 0, void 0, function* () {
+                const sessionId = req.query.sessionId;
+                const transport = transports.get(sessionId);
+                if (!transport) {
+                    return res.status(404).send('Session not found');
+                }
+                yield transport.handlePostMessage(req, res);
+            }));
+            // Health check endpoint
+            app.get('/health', (req, res) => {
+                res.json({
+                    status: 'healthy',
+                    timestamp: new Date().toISOString(),
+                    connectedClients: transports.size,
+                    endpoints: {
+                        sse: '/sse',
+                        message: '/message',
+                        health: '/health'
+                    }
+                });
+            });
+            app.listen(PORT, () => {
                 console.error(`Perplexity MCP Server running on SSE and listening on port ${PORT} with Ask, Research, and Reason tools`);
+                console.error(`SSE endpoint: http://localhost:${PORT}/sse`);
+                console.error(`Message endpoint: http://localhost:${PORT}/message`);
             });
         }
         catch (error) {
