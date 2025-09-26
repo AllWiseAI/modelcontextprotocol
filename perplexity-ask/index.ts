@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
+import { createSSEServer } from "./sse-server.js";
 
 /**
  * Definition of the Perplexity Ask Tool.
@@ -289,14 +289,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 /**
- * Initializes and runs the server using standard I/O for communication.
+ * Initializes and runs the server using SSE for communication.
  * Logs an error and exits if the server fails to start.
  */
 async function runServer() {
   try {
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-    console.error("Perplexity MCP Server running on stdio with Ask, Research, and Reason tools");
+    const PORT = process.env.PORT || 3001;
+    const sseServer = createSSEServer(server);
+    sseServer.listen(PORT, () => {
+      console.error(`Perplexity MCP Server running on SSE and listening on port ${PORT} with Ask, Research, and Reason tools`);
+    });
   } catch (error) {
     console.error("Fatal error running server:", error);
     process.exit(1);

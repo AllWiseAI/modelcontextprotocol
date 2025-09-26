@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Perplexity MCP SSE Test Client</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .section {
+            border: 1px solid #ccc;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        textarea {
+            width: 100%;
+            height: 100px;
+            margin: 10px 0;
+        }
+        button {
+            background: #007cba;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #005a82;
+        }
+        #log {
+            background: #f5f5f5;
+            padding: 10px;
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+        .connected {
+            color: green;
+        }
+        .error {
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Perplexity MCP SSE Test Client</h1>
+        
+        <div class="section">
+            <h3>Connection Status</h3>
+            <div id="status">Disconnected</div>
+            <button id="connect">Connect to SSE</button>
+            <button id="disconnect">Disconnect</button>
+        </div>
+
+        <div class="section">
+            <h3>Test Tools List</h3>
+            <button id="listTools">Get Available Tools</button>
+        </div>
+
+        <div class="section">
+            <h3>Test Tool Call</h3>
+            <textarea id="messageInput" placeholder='{"messages": [{"role": "user", "content": "What is the weather like today?"}]}'></textarea>
+            <br>
+            <select id="toolSelect">
+                <option value="perplexity_ask">Perplexity Ask</option>
+                <option value="perplexity_research">Perplexity Research</option>
+                <option value="perplexity_reason">Perplexity Reason</option>
+            </select>
+            <button id="callTool">Call Tool</button>
+        </div>
+
+        <div class="section">
+            <h3>Response Log</h3>
+            <div id="log"></div>
+            <button id="clearLog">Clear Log</button>
+        </div>
+    </div>
+
+    <script>
+        let eventSource = null;
+        let clientId = null;
+        const serverUrl = 'http://localhost:3001';
+
+        const statusEl = document.getElementById('status');
+        const logEl = document.getElementById('log');
+
+        function log(message, type = 'info') {
+            const timestamp = new Date().toISOString();
+            const logMessage = `[${timestamp}] ${message}\n`;
+            logEl.textContent += logMessage;
+            logEl.scrollTop = logEl.scrollHeight;
+            
+            if (type === 'error') {
+                console.error(message);
+            } else {
+                console.log(message);
+            }
+        }
+
+        function updateStatus(status, isConnected = false) {
+            statusEl.textContent = status;
+            statusEl.className = isConnected ? 'connected' : 'error';
+        }
+
+        function connectSSE() {
+            if (eventSource) {
+                log('Already connected');
+                return;
+            }
+
+            clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            const url = `${serverUrl}/events?clientId=${clientId}`;
+            
+            log(`Connecting to SSE: ${url}`);
+            eventSource = new EventSource(url);
+
+            eventSource.onopen = function(event) {
+                log('SSE connection opened');
+                updateStatus(`Connected (Client ID: ${clientId})`, true);
+            };
+
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    log(`Received: ${JSON.stringify(data, null, 2)}`);
+                } catch (error) {
+                    log(`Raw message: ${event.data}`);
+                }
+            };
+
+            eventSource.onerror = function(event) {
+                log('SSE connection error', 'error');
+                updateStatus('Connection Error');
+            };
+        }
+
+        function disconnectSSE() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+                clientId = null;
+                log('SSE connection closed');
+                updateStatus('Disconnected');
+            }
+        }
+
+        async function sendMessage(method, params = {}) {
+            if (!clientId) {
+                log('Not connected to SSE', 'error');
+                return;
+            }
+
+            const message = {
+                jsonrpc: '2.0',
+                id: Date.now(),
+                method: method,
+                params: params
+            };
+
+            try {
+                log(`Sending: ${JSON.stringify(message, null, 2)}`);
+                
+                const response = await fetch(`${serverUrl}/message`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Client-ID': clientId
+                    },
+                    body: JSON.stringify(message)
+                });
+
+                const result = await response.json();
+                log(`POST response: ${JSON.stringify(result, null, 2)}`);
+            } catch (error) {
+                log(`Error sending message: ${error.message}`, 'error');
+            }
+        }
+
+        // Event listeners
+        document.getElementById('connect').addEventListener('click', connectSSE);
+        document.getElementById('disconnect').addEventListener('click', disconnectSSE);
+        document.getElementById('clearLog').addEventListener('click', () => {
+            logEl.textContent = '';
+        });
+
+        document.getElementById('listTools').addEventListener('click', () => {
+            sendMessage('tools/list');
+        });
+
+        document.getElementById('callTool').addEventListener('click', () => {
+            const toolName = document.getElementById('toolSelect').value;
+            const messageText = document.getElementById('messageInput').value;
+            
+            try {
+                const args = JSON.parse(messageText);
+                sendMessage('tools/call', {
+                    name: toolName,
+                    arguments: args
+                });
+            } catch (error) {
+                log(`Invalid JSON in message input: ${error.message}`, 'error');
+            }
+        });
+
+        // Initial status
+        updateStatus('Disconnected');
+        log('Test client loaded. Click "Connect to SSE" to start.');
+    </script>
+</body>
+</html>
